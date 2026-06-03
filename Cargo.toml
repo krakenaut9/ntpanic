@@ -1,7 +1,18 @@
 [package]
 name = "kernel-panic"
-version = "0.1.0"
-edition = "2024"
+version = "0.1.1"
+edition = "2021"
+rust-version = "1.77"
+description = "Rust Windows kernel-mode panic handler"
+license = "Apache-2.0"
+readme = "README.md"
+repository = "https://github.com/krakenaut9/kernel-panic"
+homepage = "https://github.com/krakenaut9/kernel-panic"
+documentation = "https://docs.rs/kernel-panic"
+keywords = ["panic", "panic-handling", "windows", "bugcheck", "kernel", "driver", "no-std", "wdk"]
+categories = ["no-std"]
+include = ["src/**", "Cargo.toml", "README.md", "LICENSE*"]
+authors = ["Dmytriy Maslo <krakenaut9@gmail.com>"]
 
 [dependencies]
 windows-sys = { version = "0.61", features = [ "Wdk", "Wdk_System", "Wdk_System_SystemServices", "Win32_System_Diagnostics_Debug" ] }
