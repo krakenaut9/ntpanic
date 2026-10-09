@@ -15,8 +15,11 @@
 
 use core::{panic::PanicInfo, ptr::null};
 use windows_sys::Wdk::System::SystemServices::{
-    DbgBreakPointWithStatus, DbgPrintEx, KdRefreshDebuggerNotPresent, KeBugCheckEx,
+    DbgBreakPointWithStatus, KdRefreshDebuggerNotPresent, KeBugCheckEx,
 };
+
+// windows-sys imports DbgPrintEx from ntdll.dll, which a driver cannot load.
+windows_link::link!("ntoskrnl.exe" "C" fn DbgPrintEx(componentid: u32, level: u32, format: *const u8, ...) -> u32);
 
 /// Custom bug check code used by this crate when a Rust panic reaches the
 /// kernel panic handler.
