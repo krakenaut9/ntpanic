@@ -14,11 +14,8 @@
 //! kernel mode is unsafe and unsupported by this crate.
 
 use core::{panic::PanicInfo, ptr::null};
-use windows_sys::{
-    core::PCSTR,
-    Wdk::System::SystemServices::{
-        DbgBreakPointWithStatus, DbgPrintEx, KdRefreshDebuggerNotPresent, KeBugCheckEx,
-    },
+use windows_sys::Wdk::System::SystemServices::{
+    DbgBreakPointWithStatus, DbgPrintEx, KdRefreshDebuggerNotPresent, KeBugCheckEx,
 };
 
 /// Custom bug check code used by this crate when a Rust panic reaches the
@@ -80,21 +77,21 @@ fn panic(info: &PanicInfo) -> ! {
             DbgPrintEx(
                 0,
                 0,
-                PCSTR::from(
-                    c"*************** RUST KERNEL PANIC (unknown location) ***************\n"
-                        .as_ptr()
-                        .cast(),
-                ),
+                concat!(
+                    "*************** RUST KERNEL PANIC (unknown location) ***************\n",
+                    "\0"
+                )
+                .as_ptr(),
             );
         } else {
             DbgPrintEx(
                 0,
                 0,
-                PCSTR::from(
-                    c"*************** RUST KERNEL PANIC at %.*s:%u ***************\n"
-                        .as_ptr()
-                        .cast(),
-                ),
+                concat!(
+                    "*************** RUST KERNEL PANIC at %.*s:%u ***************\n",
+                    "\0"
+                )
+                .as_ptr(),
                 file_len,
                 file_ptr,
                 line,

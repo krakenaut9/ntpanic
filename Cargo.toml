@@ -2,7 +2,7 @@
 name = "kernel-panic"
 version = "0.1.1"
 edition = "2021"
-rust-version = "1.77"
+rust-version = "1.71"
 description = "Rust Windows kernel-mode panic handler"
 license = "Apache-2.0"
 readme = "README.md"
