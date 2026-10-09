@@ -14,9 +14,12 @@
 //! kernel mode is unsafe and unsupported by this crate.
 
 use core::{panic::PanicInfo, ptr::null};
-use windows_sys::{core::PCSTR, Wdk::System::SystemServices::{
-    DbgBreakPointWithStatus, DbgPrintEx, KdRefreshDebuggerNotPresent, KeBugCheckEx
-}};
+use windows_sys::{
+    core::PCSTR,
+    Wdk::System::SystemServices::{
+        DbgBreakPointWithStatus, DbgPrintEx, KdRefreshDebuggerNotPresent, KeBugCheckEx,
+    },
+};
 
 /// Custom bug check code used by this crate when a Rust panic reaches the
 /// kernel panic handler.
@@ -28,7 +31,6 @@ use windows_sys::{core::PCSTR, Wdk::System::SystemServices::{
 /// - Arg3: file path length
 /// - Arg4: reserved (`0`)
 const RUST_KERNEL_BUGCHECK: u32 = 0xE052_5354;
-
 
 /// Global panic handler for Windows kernel-mode drivers.
 ///
@@ -78,13 +80,21 @@ fn panic(info: &PanicInfo) -> ! {
             DbgPrintEx(
                 0,
                 0,
-                PCSTR::from(c"*************** RUST KERNEL PANIC (unknown location) ***************\n".as_ptr().cast()),
+                PCSTR::from(
+                    c"*************** RUST KERNEL PANIC (unknown location) ***************\n"
+                        .as_ptr()
+                        .cast(),
+                ),
             );
         } else {
             DbgPrintEx(
                 0,
                 0,
-                PCSTR::from(c"*************** RUST KERNEL PANIC at %.*s:%u ***************\n".as_ptr().cast()),
+                PCSTR::from(
+                    c"*************** RUST KERNEL PANIC at %.*s:%u ***************\n"
+                        .as_ptr()
+                        .cast(),
+                ),
                 file_len,
                 file_ptr,
                 line,
