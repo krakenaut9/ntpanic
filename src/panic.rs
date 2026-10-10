@@ -97,7 +97,7 @@ fn panic(info: &PanicInfo) -> ! {
                     "\0"
                 )
                 .as_ptr(),
-                file_len,
+                i32::try_from(file_len).unwrap_or(i32::MAX),
                 file_ptr,
                 line,
             );
