@@ -13,7 +13,7 @@
 //! The panic path is intentionally fatal. Continuing execution after a panic in
 //! kernel mode is unsafe and unsupported by this crate.
 
-use core::{panic::PanicInfo, ptr::null};
+use core::{panic::PanicInfo, ptr::null, sync::atomic::Ordering};
 use windows_sys::Wdk::System::SystemServices::{
     DbgBreakPointWithStatus, KdRefreshDebuggerNotPresent,
 };
@@ -77,11 +77,14 @@ fn panic(info: &PanicInfo) -> ! {
         None => (null(), 0usize, 0u32),
     };
 
+    let component_id = crate::COMPONENT_ID.load(Ordering::Relaxed);
+    let level = crate::LEVEL.load(Ordering::Relaxed);
+
     unsafe {
         if file_ptr.is_null() {
             DbgPrintEx(
-                0,
-                0,
+                component_id,
+                level,
                 concat!(
                     "*************** RUST KERNEL PANIC (unknown location) ***************\n",
                     "\0"
@@ -90,8 +93,8 @@ fn panic(info: &PanicInfo) -> ! {
             );
         } else {
             DbgPrintEx(
-                0,
-                0,
+                component_id,
+                level,
                 concat!(
                     "*************** RUST KERNEL PANIC at %.*s:%u ***************\n",
                     "\0"
