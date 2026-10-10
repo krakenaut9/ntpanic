@@ -16,4 +16,4 @@ authors = ["Dmytriy Maslo <krakenaut9@gmail.com>"]
 
 [dependencies]
 windows-link = "0.2"
-windows-sys = { version = "0.61", features = [ "Wdk", "Wdk_System", "Wdk_System_SystemServices", "Win32_System_Diagnostics_Debug" ] }
+windows-sys = { version = "0.61", features = [ "Wdk", "Wdk_System", "Wdk_System_SystemServices" ] }
