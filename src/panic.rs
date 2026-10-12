@@ -46,7 +46,7 @@ const RESERVED_BUGCHECK_PARAMETER: usize = 0;
 
 /// Global panic handler for Windows kernel-mode drivers.
 ///
-/// This function is the crate's global [`panic_handler`]. When a panic occurs,
+/// This function is the crate's global `#[panic_handler]`. When a panic occurs,
 /// it attempts to report the panic location through `DbgPrintEx`, optionally
 /// breaks into the kernel debugger if one is attached, and then terminates the
 /// system with `KeBugCheckEx`.
