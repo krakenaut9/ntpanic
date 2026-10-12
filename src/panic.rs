@@ -34,6 +34,16 @@ windows_link::link!("ntoskrnl.exe" "system" fn KeBugCheckEx(bugcheckcode: u32, b
 /// - Arg4: reserved (`0`)
 const RUST_KERNEL_BUGCHECK: u32 = 0xE052_5354;
 
+// Reported when the panic carries no location.
+const UNKNOWN_FILE_LEN: usize = 0;
+const UNKNOWN_LINE: u32 = 0;
+
+// Status sent to the debugger with the break-in.
+const DEBUG_BREAK_STATUS: u32 = 0;
+
+// Bug check Arg4, which this crate leaves unused.
+const RESERVED_BUGCHECK_PARAMETER: usize = 0;
+
 /// Global panic handler for Windows kernel-mode drivers.
 ///
 /// This function is the crate's global [`panic_handler`]. When a panic occurs,
@@ -74,7 +84,7 @@ fn panic(info: &PanicInfo) -> ! {
             let f = loc.file();
             (f.as_ptr(), f.len(), loc.line())
         }
-        None => (null(), 0usize, 0u32),
+        None => (null(), UNKNOWN_FILE_LEN, UNKNOWN_LINE),
     };
 
     let component_id = crate::COMPONENT_ID.load(Ordering::Relaxed);
@@ -111,7 +121,7 @@ fn panic(info: &PanicInfo) -> ! {
 
     if !debugger_not_present {
         unsafe {
-            DbgBreakPointWithStatus(0);
+            DbgBreakPointWithStatus(DEBUG_BREAK_STATUS);
         }
     }
 
@@ -121,7 +131,7 @@ fn panic(info: &PanicInfo) -> ! {
             line as usize,
             file_ptr as usize,
             file_len,
-            0,
+            RESERVED_BUGCHECK_PARAMETER,
         )
     }
 }
