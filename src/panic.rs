@@ -1,19 +1,10 @@
 //! Panic handling for Windows kernel-mode Rust drivers.
 //!
-//! This module defines the crate's global `#[panic_handler]`.
-//!
-//! On panic, the handler:
-//!
-//! 1. extracts panic location information from [`core::panic::PanicInfo`],
-//! 2. prints a diagnostic message using `DbgPrintEx`,
-//! 3. checks whether a kernel debugger is attached,
-//! 4. breaks into the debugger with `DbgBreakPointWithStatus` when available,
-//! 5. terminates the system with `KeBugCheckEx`.
-//!
+//! This module defines the crate's global `#[panic_handler]`, described at [`panic()`].
 //! The panic path is intentionally fatal. Continuing execution after a panic in
 //! kernel mode is unsafe and unsupported by this crate.
 
-use core::{panic::PanicInfo, ptr::null, sync::atomic::Ordering};
+use core::{panic::PanicInfo, sync::atomic::Ordering};
 use windows_sys::Wdk::System::SystemServices::{
     DbgBreakPointWithStatus, KdRefreshDebuggerNotPresent,
 };
@@ -32,10 +23,12 @@ windows_link::link!("ntoskrnl.exe" "system" fn KeBugCheckEx(bugcheckcode: u32, b
 /// - Arg2: pointer to the file path bytes
 /// - Arg3: file path length
 /// - Arg4: reserved (`0`)
+///
+/// A panic without a location reports the file path `<unknown>` and line `0`.
 const RUST_KERNEL_BUGCHECK: u32 = 0xE052_5354;
 
 // Reported when the panic carries no location.
-const UNKNOWN_FILE_LEN: usize = 0;
+const UNKNOWN_FILE: &str = "<unknown>";
 const UNKNOWN_LINE: u32 = 0;
 
 // Status sent to the debugger with the break-in.
@@ -59,14 +52,8 @@ const RESERVED_BUGCHECK_PARAMETER: usize = 0;
 /// 2. prints a diagnostic message with `DbgPrintEx`;
 /// 3. checks whether a kernel debugger is present via `KdRefreshDebuggerNotPresent`;
 /// 4. calls `DbgBreakPointWithStatus(0)` if a debugger is attached;
-/// 5. invokes `KeBugCheckEx` with a crate-specific bug check code.
-///
-/// The bug check arguments are used as follows:
-///
-/// - **Arg1**: panic line number
-/// - **Arg2**: pointer to the source file path bytes
-/// - **Arg3**: source file path length
-/// - **Arg4**: reserved (`0`)
+/// 5. invokes `KeBugCheckEx` with the code and parameters described at
+///    [`RUST_KERNEL_BUGCHECK`].
 ///
 /// # Panics
 ///
@@ -79,42 +66,28 @@ const RESERVED_BUGCHECK_PARAMETER: usize = 0;
 /// execution after a panic in kernel space is considered unsafe.
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
-    let (file_ptr, file_len, line) = match info.location() {
-        Some(loc) => {
-            let f = loc.file();
-            (f.as_ptr(), f.len(), loc.line())
-        }
-        None => (null(), UNKNOWN_FILE_LEN, UNKNOWN_LINE),
-    };
+    let (file, line) = info
+        .location()
+        .map_or((UNKNOWN_FILE, UNKNOWN_LINE), |location| {
+            (location.file(), location.line())
+        });
 
     let component_id = crate::COMPONENT_ID.load(Ordering::Relaxed);
     let level = crate::LEVEL.load(Ordering::Relaxed);
 
     unsafe {
-        if file_ptr.is_null() {
-            DbgPrintEx(
-                component_id,
-                level,
-                concat!(
-                    "*************** RUST KERNEL PANIC (unknown location) ***************\n",
-                    "\0"
-                )
-                .as_ptr(),
-            );
-        } else {
-            DbgPrintEx(
-                component_id,
-                level,
-                concat!(
-                    "*************** RUST KERNEL PANIC at %.*s:%u ***************\n",
-                    "\0"
-                )
-                .as_ptr(),
-                i32::try_from(file_len).unwrap_or(i32::MAX),
-                file_ptr,
-                line,
-            );
-        }
+        DbgPrintEx(
+            component_id,
+            level,
+            concat!(
+                "*************** RUST KERNEL PANIC at %.*s:%u ***************\n",
+                "\0"
+            )
+            .as_ptr(),
+            i32::try_from(file.len()).unwrap_or(i32::MAX),
+            file.as_ptr(),
+            line,
+        );
     }
 
     let debugger_not_present = unsafe { KdRefreshDebuggerNotPresent() };
@@ -129,8 +102,8 @@ fn panic(info: &PanicInfo) -> ! {
         KeBugCheckEx(
             RUST_KERNEL_BUGCHECK,
             line as usize,
-            file_ptr as usize,
-            file_len,
+            file.as_ptr() as usize,
+            file.len(),
             RESERVED_BUGCHECK_PARAMETER,
         )
     }
