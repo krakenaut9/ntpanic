@@ -24,28 +24,13 @@ windows_link::link!("ntoskrnl.exe" "system" fn KeGetCurrentIrql() -> u8);
 #[cfg(not(target_arch = "x86_64"))]
 windows_link::link!("hal.dll" "system" fn KeGetCurrentIrql() -> u8);
 
-/// Custom bug check code used by this crate when a Rust panic reaches the
-/// kernel panic handler.
-///
-/// The accompanying bug check arguments are:
-///
-/// - Arg1: panic line number
-/// - Arg2: pointer to the file path bytes
-/// - Arg3: file path length
-/// - Arg4: reserved (`0`)
-///
-/// A panic without a location reports the file path `<unknown>` and line `0`.
-const RUST_KERNEL_BUGCHECK: u32 = 0xE052_5354;
-
 // Reported when the panic carries no location.
 const UNKNOWN_FILE: &str = "<unknown>";
 const UNKNOWN_LINE: u32 = 0;
+const UNKNOWN_COLUMN: u32 = 0;
 
 // Status sent to the debugger with the break-in.
 const DEBUG_BREAK_STATUS: u32 = 0;
-
-// Bug check Arg4, which this crate leaves unused.
-const RESERVED_BUGCHECK_PARAMETER: usize = 0;
 
 // DbgPrintEx is documented for IRQL <= DIRQL and can deadlock above it. This is the
 // first IRQL above every device IRQL in wdm.h: PROFILE_LEVEL on x86, CLOCK_LEVEL on
@@ -71,7 +56,7 @@ static PANICKING: AtomicBool = AtomicBool::new(false);
 ///
 /// On panic, the handler:
 ///
-/// 1. extracts the source file path and line number from [`PanicInfo`], when available;
+/// 1. extracts the source file path, line and column from [`PanicInfo`], when available;
 /// 2. prints a diagnostic message with `DbgPrintEx` that gives the location (only the
 ///    end of a very long path), the IRQL and the process and thread IDs, unless the
 ///    IRQL is above DIRQL, where `DbgPrintEx` can deadlock;
@@ -79,8 +64,9 @@ static PANICKING: AtomicBool = AtomicBool::new(false);
 ///    first panic only;
 /// 4. checks whether a kernel debugger is present via `KdRefreshDebuggerNotPresent`;
 /// 5. calls `DbgBreakPointWithStatus(0)` if a debugger is attached;
-/// 6. invokes `KeBugCheckEx` with the code and parameters described at
-///    [`RUST_KERNEL_BUGCHECK`].
+/// 6. invokes `KeBugCheckEx` with the code set with
+///    [`set_bug_check_code`](crate::set_bug_check_code), "RUST" by default, and the
+///    parameters described there.
 ///
 /// # Panics
 ///
@@ -94,10 +80,10 @@ static PANICKING: AtomicBool = AtomicBool::new(false);
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
     let irql = unsafe { KeGetCurrentIrql() };
-    let (file, line) = info
+    let (file, line, column) = info
         .location()
-        .map_or((UNKNOWN_FILE, UNKNOWN_LINE), |location| {
-            (location.file(), location.line())
+        .map_or((UNKNOWN_FILE, UNKNOWN_LINE, UNKNOWN_COLUMN), |location| {
+            (location.file(), location.line(), location.column())
         });
 
     if irql < FIRST_IRQL_ABOVE_DIRQL {
@@ -142,11 +128,11 @@ fn panic(info: &PanicInfo) -> ! {
 
     unsafe {
         KeBugCheckEx(
-            RUST_KERNEL_BUGCHECK,
+            crate::BUG_CHECK_CODE.load(Ordering::Relaxed),
             line as usize,
             file.as_ptr() as usize,
             file.len(),
-            RESERVED_BUGCHECK_PARAMETER,
+            column as usize,
         )
     }
 }

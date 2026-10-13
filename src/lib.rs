@@ -18,9 +18,13 @@ mod panic;
 const DPFLTR_IHVDRIVER_ID: u32 = 77;
 const DPFLTR_ERROR_LEVEL: u32 = 0;
 
+// The bug check code that a panic reports unless the driver sets another: "RUST".
+const DEFAULT_BUG_CHECK_CODE: u32 = u32::from_be_bytes(*b"RUST");
+
 // Read by the panic handler. Each value stands alone, so Relaxed ordering is enough.
 static COMPONENT_ID: AtomicU32 = AtomicU32::new(DPFLTR_IHVDRIVER_ID);
 static LEVEL: AtomicU32 = AtomicU32::new(DPFLTR_ERROR_LEVEL);
+static BUG_CHECK_CODE: AtomicU32 = AtomicU32::new(DEFAULT_BUG_CHECK_CODE);
 
 /// Sets the `DbgPrintEx` component ID that the panic message is printed under.
 ///
@@ -78,6 +82,40 @@ pub fn set_component_id(component_id: u32) {
 /// [Reading and Filtering Debugging Messages]: https://learn.microsoft.com/en-us/windows-hardware/drivers/debugger/reading-and-filtering-debugging-messages
 pub fn set_level(level: u32) {
     LEVEL.store(level, Ordering::Relaxed);
+}
+
+/// Sets the bug check code that a panic reports.
+///
+/// The default is `0x52555354`, "RUST" in ASCII. Whatever the code, the four bug check
+/// parameters are:
+///
+/// | Parameter | Value |
+/// |---|---|
+/// | 1 | the line number |
+/// | 2 | the address of the file path, which is not null-terminated |
+/// | 3 | the length of the file path, in bytes |
+/// | 4 | the column number |
+///
+/// A panic without a location reports the path `<unknown>`, the line 0 and the column 0.
+///
+/// A code of your own lets crash analysis tell your driver's panics apart from those of
+/// other drivers that use this crate. Choose one that Windows does not use (see the
+/// [Bug Check Code Reference]): `WinDbg` describes a crash, and its parameters, by its
+/// code, so reusing one of Windows' codes would make it misreport the panic.
+///
+/// Can be called at any IRQL. The handler reads the code when it bug-checks, after the
+/// callback set with [`set_callback`], so a callback can also choose the code for the
+/// panic at hand. A panic before the first call uses the default.
+///
+/// # Examples
+///
+/// ```ignore
+/// ntpanic::set_bug_check_code(u32::from_be_bytes(*b"ACME"));
+/// ```
+///
+/// [Bug Check Code Reference]: https://learn.microsoft.com/en-us/windows-hardware/drivers/debugger/bug-check-code-reference2
+pub fn set_bug_check_code(code: u32) {
+    BUG_CHECK_CODE.store(code, Ordering::Relaxed);
 }
 
 /// A function for the panic handler to call, with the panic and the IRQL it occurred at;
@@ -162,6 +200,8 @@ mod tests {
     const DPFLTR_IHVNETWORK_ID: u32 = 80;
     const DPFLTR_INFO_LEVEL: u32 = 3;
 
+    const TEST_BUG_CHECK_CODE: u32 = u32::from_be_bytes(*b"TEST");
+
     // One byte more than is printed, so exactly the first byte must be cut.
     const OVERLONG_PATH_LEN: usize = MAX_PRINTED_PATH_LEN + 1;
 
@@ -191,12 +231,18 @@ mod tests {
     fn settings_start_at_the_defaults_and_follow_the_setters() {
         assert_eq!(COMPONENT_ID.load(Ordering::Relaxed), DPFLTR_IHVDRIVER_ID);
         assert_eq!(LEVEL.load(Ordering::Relaxed), DPFLTR_ERROR_LEVEL);
+        assert_eq!(
+            BUG_CHECK_CODE.load(Ordering::Relaxed),
+            DEFAULT_BUG_CHECK_CODE
+        );
 
         set_component_id(DPFLTR_IHVNETWORK_ID);
         set_level(DPFLTR_INFO_LEVEL);
+        set_bug_check_code(TEST_BUG_CHECK_CODE);
 
         assert_eq!(COMPONENT_ID.load(Ordering::Relaxed), DPFLTR_IHVNETWORK_ID);
         assert_eq!(LEVEL.load(Ordering::Relaxed), DPFLTR_INFO_LEVEL);
+        assert_eq!(BUG_CHECK_CODE.load(Ordering::Relaxed), TEST_BUG_CHECK_CODE);
     }
 
     // One test, because the callback is global and tests run in parallel.

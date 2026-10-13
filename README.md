@@ -5,7 +5,7 @@ A panic handler for Windows kernel-mode Rust drivers.
 A panic in a driver cannot be recovered from. `ntpanic` makes it fail usefully: it
 prints where the panic happened with `DbgPrintEx`, breaks into the kernel debugger if
 one is attached, and then bug-checks the system with its own bug check code, whose
-parameters give the file and line of the panic.
+parameters give the file, line and column of the panic.
 
 ---
 
@@ -16,7 +16,8 @@ parameters give the file and line of the panic.
 - Prints the panic's location, IRQL, process ID and thread ID
 - Skips the message above DIRQL, where `DbgPrintEx` can deadlock
 - Breaks into KD or `WinDbg` when a debugger is attached
-- Ends in bug check `0xE0525354`, which carries the file and line
+- Ends in a bug check that carries the file, line and column, with the code
+  `0x52555354` ("RUST") or one of your own
 - Optional callback, for example to log the panic message with your own logger
 - Builds on stable Rust 1.71 or later, without the WDK
 
@@ -71,25 +72,26 @@ panic = "abort"
    [Panic callback](#panic-callback).
 3. **Debugger.** If a kernel debugger is attached, the handler breaks into it with
    `DbgBreakPointWithStatus`, stopping on the panicking thread.
-4. **Bug check.** The handler calls `KeBugCheckEx` with the code `0xE0525354` (its last
-   three bytes spell `RST`) and these parameters:
+4. **Bug check.** The handler calls `KeBugCheckEx` with the code `0x52555354`, "RUST"
+   in ASCII, unless you set another (see [Bug check code](#bug-check-code)), and these
+   parameters:
 
    | Parameter | Value                                                      |
    | --------- | ---------------------------------------------------------- |
    | 1         | the line number                                            |
    | 2         | the address of the file path, which is not null-terminated |
    | 3         | the length of the file path, in bytes                      |
-   | 4         | 0, reserved                                                |
+   | 4         | the column number                                          |
 
-   A panic without a location reports the path `<unknown>` and the line 0.
+   A panic without a location reports the path `<unknown>`, the line 0 and the column 0.
 
 In a kernel or complete memory dump, `.bugcheck` shows the parameters and `da` reads
 the path:
 
 ```text
 kd> .bugcheck
-Bugcheck code E0525354
-Arguments 00000000`0000002a fffff806`2b4c1230 00000000`0000000d 00000000`00000000
+Bugcheck code 52555354
+Arguments 00000000`0000002a fffff806`2b4c1230 00000000`0000000d 00000000`00000011
 kd> da fffff806`2b4c1230 L0xd
 fffff806`2b4c1230  "src\driver.rs"
 ```
@@ -118,6 +120,20 @@ ntpanic::set_component_id(DPFLTR_IHVNETWORK_ID);
 A level other than `DPFLTR_ERROR_LEVEL` is shown only if the component's filter mask
 enables it, so changing the level can hide the message. See
 [Reading and Filtering Debugging Messages](https://learn.microsoft.com/en-us/windows-hardware/drivers/debugger/reading-and-filtering-debugging-messages).
+
+### Bug check code
+
+`set_bug_check_code` replaces the default code, for example so that crash analysis can
+tell your driver's panics apart from those of other drivers that use `ntpanic`:
+
+```rust,ignore
+ntpanic::set_bug_check_code(u32::from_be_bytes(*b"ACME"));
+```
+
+The parameters keep their meaning whatever the code. Choose a code that Windows does not
+use (see the [Bug Check Code Reference](https://learn.microsoft.com/en-us/windows-hardware/drivers/debugger/bug-check-code-reference2)):
+`WinDbg` describes a crash, and its parameters, by its code. The handler reads the code
+just before it bug-checks, so a panic callback can also set it.
 
 ### Panic callback
 
