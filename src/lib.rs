@@ -75,6 +75,20 @@ pub fn set_level(level: u32) {
     LEVEL.store(level, Ordering::Relaxed);
 }
 
+// DbgPrintEx transmits at most 512 bytes per call. The panic message keeps only the
+// end of a long path, its informative part, and gives it half of that budget; the
+// other half is left for the rest of the message.
+const MAX_PRINTED_PATH_LEN: usize = 256;
+
+/// The part of `path` that the panic message prints: all of it, or its last
+/// `MAX_PRINTED_PATH_LEN` bytes.
+fn printed_path(path: &str) -> &[u8] {
+    let bytes = path.as_bytes();
+    bytes
+        .get(bytes.len().saturating_sub(MAX_PRINTED_PATH_LEN)..)
+        .unwrap_or_default()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -82,6 +96,28 @@ mod tests {
     // From the WDK's dpfilter.h.
     const DPFLTR_IHVNETWORK_ID: u32 = 80;
     const DPFLTR_INFO_LEVEL: u32 = 3;
+
+    // One byte more than is printed, so exactly the first byte must be cut.
+    const OVERLONG_PATH_LEN: usize = MAX_PRINTED_PATH_LEN + 1;
+
+    #[test]
+    fn printed_path_keeps_a_path_of_the_maximum_length_whole() {
+        let bytes = [b'a'; MAX_PRINTED_PATH_LEN];
+        let path = core::str::from_utf8(&bytes).unwrap();
+        assert_eq!(printed_path(path), &bytes[..]);
+    }
+
+    #[test]
+    fn printed_path_keeps_the_end_of_a_longer_path() {
+        let mut bytes = [b'a'; OVERLONG_PATH_LEN];
+        // Mark the byte that must be cut, so that keeping the start instead fails.
+        *bytes.first_mut().unwrap() = b'X';
+        let path = core::str::from_utf8(&bytes).unwrap();
+        assert_eq!(
+            printed_path(path),
+            &bytes[OVERLONG_PATH_LEN - MAX_PRINTED_PATH_LEN..]
+        );
+    }
 
     // One test, because the settings are global and tests run in parallel.
     #[test]

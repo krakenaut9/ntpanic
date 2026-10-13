@@ -6,7 +6,8 @@
 
 use core::{panic::PanicInfo, sync::atomic::Ordering};
 use windows_sys::Wdk::System::SystemServices::{
-    DbgBreakPointWithStatus, KdRefreshDebuggerNotPresent,
+    DbgBreakPointWithStatus, KdRefreshDebuggerNotPresent, PsGetCurrentProcessId,
+    PsGetCurrentThreadId,
 };
 
 // windows-sys imports DbgPrintEx from ntdll.dll, which a driver cannot load.
@@ -63,8 +64,9 @@ const FIRST_IRQL_ABOVE_DIRQL: u8 = 13;
 /// On panic, the handler:
 ///
 /// 1. extracts the source file path and line number from [`PanicInfo`], when available;
-/// 2. prints a diagnostic message with `DbgPrintEx`, unless the IRQL is above DIRQL,
-///    where `DbgPrintEx` can deadlock;
+/// 2. prints a diagnostic message with `DbgPrintEx` that gives the location (only the
+///    end of a very long path), the IRQL and the process and thread IDs, unless the
+///    IRQL is above DIRQL, where `DbgPrintEx` can deadlock;
 /// 3. checks whether a kernel debugger is present via `KdRefreshDebuggerNotPresent`;
 /// 4. calls `DbgBreakPointWithStatus(0)` if a debugger is attached;
 /// 5. invokes `KeBugCheckEx` with the code and parameters described at
@@ -91,19 +93,25 @@ fn panic(info: &PanicInfo) -> ! {
     if irql < FIRST_IRQL_ABOVE_DIRQL {
         let component_id = crate::COMPONENT_ID.load(Ordering::Relaxed);
         let level = crate::LEVEL.load(Ordering::Relaxed);
+        let path = crate::printed_path(file);
+        let (process_id, thread_id) = unsafe { (PsGetCurrentProcessId(), PsGetCurrentThreadId()) };
 
         unsafe {
             DbgPrintEx(
                 component_id,
                 level,
                 concat!(
-                    "*************** RUST KERNEL PANIC at %.*s:%u ***************\n",
+                    "*************** RUST KERNEL PANIC at %.*s:%u ",
+                    "(irql %u, pid %Iu, tid %Iu) ***************\n",
                     "\0"
                 )
                 .as_ptr(),
-                i32::try_from(file.len()).unwrap_or(i32::MAX),
-                file.as_ptr(),
+                i32::try_from(path.len()).unwrap_or(i32::MAX),
+                path.as_ptr(),
                 line,
+                u32::from(irql),
+                process_id as usize,
+                thread_id as usize,
             );
         }
     }
