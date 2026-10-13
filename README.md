@@ -1,6 +1,6 @@
-# kernel-panic
+# ntpanic
 
-`kernel-panic` provides a global `#[panic_handler]` for **Rust Windows kernel-mode drivers**.
+`ntpanic` provides a global `#[panic_handler]` for **Rust Windows kernel-mode drivers**.
 
 When a panic occurs, the handler:
 
@@ -40,4 +40,4 @@ Add the crate to your driver crate:
 
 ```toml
 [dependencies]
-kernel-panic = "0.1"
+ntpanic = "0.1"

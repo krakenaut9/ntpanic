@@ -46,7 +46,7 @@ static LEVEL: AtomicU32 = AtomicU32::new(DPFLTR_ERROR_LEVEL);
 /// // From the WDK's dpfilter.h.
 /// const DPFLTR_IHVNETWORK_ID: u32 = 80;
 ///
-/// kernel_panic::set_component_id(DPFLTR_IHVNETWORK_ID);
+/// ntpanic::set_component_id(DPFLTR_IHVNETWORK_ID);
 /// ```
 pub fn set_component_id(component_id: u32) {
     COMPONENT_ID.store(component_id, Ordering::Relaxed);
@@ -72,7 +72,7 @@ pub fn set_component_id(component_id: u32) {
 /// // From the WDK's dpfilter.h.
 /// const DPFLTR_WARNING_LEVEL: u32 = 1;
 ///
-/// kernel_panic::set_level(DPFLTR_WARNING_LEVEL);
+/// ntpanic::set_level(DPFLTR_WARNING_LEVEL);
 /// ```
 ///
 /// [Reading and Filtering Debugging Messages]: https://learn.microsoft.com/en-us/windows-hardware/drivers/debugger/reading-and-filtering-debugging-messages
@@ -122,7 +122,7 @@ static CALLBACK: AtomicPtr<()> = AtomicPtr::new(ptr::null_mut());
 ///     }
 /// }
 ///
-/// kernel_panic::set_callback(Some(log_panic));
+/// ntpanic::set_callback(Some(log_panic));
 /// ```
 pub fn set_callback(callback: Option<Callback>) {
     let callback = callback.map_or(ptr::null_mut(), |callback| callback as *mut ());

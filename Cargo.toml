@@ -1,19 +1,21 @@
 [package]
-name = "kernel-panic"
-version = "0.1.1"
+name = "ntpanic"
+version = "0.1.0"
 edition = "2021"
 rust-version = "1.71"
-description = "Rust Windows kernel-mode panic handler"
+description = "Panic handler for Windows kernel-mode Rust drivers: reports the panic, then bug-checks the system."
 license = "Apache-2.0"
 readme = "README.md"
-repository = "https://github.com/krakenaut9/kernel-panic"
-homepage = "https://github.com/krakenaut9/kernel-panic"
-documentation = "https://docs.rs/kernel-panic"
-keywords = ["panic", "panic-handling", "windows", "bugcheck", "kernel", "driver", "no-std", "wdk"]
-categories = ["no-std"]
-include = ["src/**", "Cargo.toml", "README.md", "LICENSE*"]
-authors = ["Dmytriy Maslo <krakenaut9@gmail.com>"]
+repository = "https://github.com/krakenaut9/ntpanic"
+documentation = "https://docs.rs/ntpanic"
+keywords = ["panic-handler", "windows", "kernel", "driver", "wdk"]
+categories = ["no-std", "no-std::no-alloc", "os::windows-apis", "development-tools::debugging"]
+include = ["src/**", "Cargo.toml", "README.md", "CHANGELOG.md", "LICENSE*"]
+authors = ["Dmytro Maslo <krakenaut9@gmail.com>"]
 
 [dependencies]
 windows-link = "0.2"
 windows-sys = { version = "0.61", features = [ "Wdk", "Wdk_System", "Wdk_System_SystemServices" ] }
+
+[package.metadata.docs.rs]
+targets = ["x86_64-pc-windows-msvc", "i686-pc-windows-msvc", "aarch64-pc-windows-msvc"]
