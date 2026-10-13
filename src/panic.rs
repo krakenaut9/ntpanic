@@ -4,7 +4,10 @@
 //! The panic path is intentionally fatal. Continuing execution after a panic in
 //! kernel mode is unsafe and unsupported by this crate.
 
-use core::{panic::PanicInfo, sync::atomic::Ordering};
+use core::{
+    panic::PanicInfo,
+    sync::atomic::{AtomicBool, Ordering},
+};
 use windows_sys::Wdk::System::SystemServices::{
     DbgBreakPointWithStatus, KdRefreshDebuggerNotPresent, PsGetCurrentProcessId,
     PsGetCurrentThreadId,
@@ -52,12 +55,17 @@ const FIRST_IRQL_ABOVE_DIRQL: u8 = 27;
 #[cfg(not(target_arch = "x86"))]
 const FIRST_IRQL_ABOVE_DIRQL: u8 = 13;
 
+// Set by the first panic, so that no later one calls the callback: not one inside it, on
+// another processor, or after the callback was set again. Only the swap's atomicity
+// matters, so Relaxed ordering is enough.
+static PANICKING: AtomicBool = AtomicBool::new(false);
+
 /// Global panic handler for Windows kernel-mode drivers.
 ///
 /// This function is the crate's global `#[panic_handler]`. When a panic occurs,
-/// it attempts to report the panic location through `DbgPrintEx`, optionally
-/// breaks into the kernel debugger if one is attached, and then terminates the
-/// system with `KeBugCheckEx`.
+/// it attempts to report the panic location through `DbgPrintEx`, calls the
+/// optional callback, optionally breaks into the kernel debugger if one is
+/// attached, and then terminates the system with `KeBugCheckEx`.
 ///
 /// # Behavior
 ///
@@ -67,9 +75,11 @@ const FIRST_IRQL_ABOVE_DIRQL: u8 = 13;
 /// 2. prints a diagnostic message with `DbgPrintEx` that gives the location (only the
 ///    end of a very long path), the IRQL and the process and thread IDs, unless the
 ///    IRQL is above DIRQL, where `DbgPrintEx` can deadlock;
-/// 3. checks whether a kernel debugger is present via `KdRefreshDebuggerNotPresent`;
-/// 4. calls `DbgBreakPointWithStatus(0)` if a debugger is attached;
-/// 5. invokes `KeBugCheckEx` with the code and parameters described at
+/// 3. calls the function set with [`set_callback`](crate::set_callback), if any, for the
+///    first panic only;
+/// 4. checks whether a kernel debugger is present via `KdRefreshDebuggerNotPresent`;
+/// 5. calls `DbgBreakPointWithStatus(0)` if a debugger is attached;
+/// 6. invokes `KeBugCheckEx` with the code and parameters described at
 ///    [`RUST_KERNEL_BUGCHECK`].
 ///
 /// # Panics
@@ -113,6 +123,12 @@ fn panic(info: &PanicInfo) -> ! {
                 process_id as usize,
                 thread_id as usize,
             );
+        }
+    }
+
+    if !PANICKING.swap(true, Ordering::Relaxed) {
+        if let Some(callback) = crate::current_callback() {
+            callback(info, irql);
         }
     }
 

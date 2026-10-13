@@ -4,7 +4,12 @@
 #![warn(clippy::all, clippy::pedantic)]
 #![doc = include_str!("../README.md")]
 
-use core::sync::atomic::{AtomicU32, Ordering};
+use core::{
+    mem,
+    panic::PanicInfo,
+    ptr,
+    sync::atomic::{AtomicPtr, AtomicU32, Ordering},
+};
 
 #[cfg(not(test))]
 mod panic;
@@ -75,6 +80,66 @@ pub fn set_level(level: u32) {
     LEVEL.store(level, Ordering::Relaxed);
 }
 
+/// A function for the panic handler to call, with the panic and the IRQL it occurred at;
+/// see [`set_callback`].
+pub type Callback = fn(&PanicInfo<'_>, u8);
+
+// The callback as a pointer, null when there is none. Stored with Release and read with
+// Acquire, so that a panic on another processor sees what was written before setting it.
+static CALLBACK: AtomicPtr<()> = AtomicPtr::new(ptr::null_mut());
+
+/// Sets a function for the panic handler to call before it bug-checks, or removes it.
+///
+/// The handler calls it with the panic, which gives its location and message, and the
+/// IRQL the panic occurred at. It does so after printing the panic message, which it
+/// skips above DIRQL, and before breaking into a debugger. Only the first panic calls it:
+/// a later one, even inside the function itself, bug-checks without calling any callback,
+/// including one set in the meantime.
+///
+/// The function runs where the panic occurred: on that thread's stack, at any IRQL up to
+/// `HIGH_LEVEL`, and with the system in an unknown state. It must not wait or take locks,
+/// must not allocate or touch pageable memory at `DISPATCH_LEVEL` or above, and must not
+/// call `DbgPrintEx` above DIRQL. If it never returns, the system hangs instead of
+/// bug-checking. To reset a device or add data to the crash dump, use a bug check callback
+/// (`KeRegisterBugCheckReasonCallback`) instead: it is made for that, and it also runs for
+/// bug checks that are not panics.
+///
+/// Can be called at any IRQL.
+///
+/// # Examples
+///
+/// ```ignore
+/// use core::panic::PanicInfo;
+///
+/// // From the WDK's wdm.h.
+/// const DISPATCH_LEVEL: u8 = 2;
+///
+/// fn log_panic(info: &PanicInfo, irql: u8) {
+///     // A logger may allocate or touch pageable memory, which is safe only below
+///     // DISPATCH_LEVEL.
+///     if irql < DISPATCH_LEVEL {
+///         log::error!("{info}");
+///     }
+/// }
+///
+/// kernel_panic::set_callback(Some(log_panic));
+/// ```
+pub fn set_callback(callback: Option<Callback>) {
+    let callback = callback.map_or(ptr::null_mut(), |callback| callback as *mut ());
+    CALLBACK.store(callback, Ordering::Release);
+}
+
+/// The callback, if one is set.
+fn current_callback() -> Option<Callback> {
+    let callback = CALLBACK.load(Ordering::Acquire);
+    if callback.is_null() {
+        None
+    } else {
+        // Only `set_callback` stores a non-null value, and it stores a `Callback`.
+        Some(unsafe { mem::transmute::<*mut (), Callback>(callback) })
+    }
+}
+
 // DbgPrintEx transmits at most 512 bytes per call. The panic message keeps only the
 // end of a long path, its informative part, and gives it half of that budget; the
 // other half is left for the rest of the message.
@@ -99,6 +164,8 @@ mod tests {
 
     // One byte more than is printed, so exactly the first byte must be cut.
     const OVERLONG_PATH_LEN: usize = MAX_PRINTED_PATH_LEN + 1;
+
+    fn callback(_info: &PanicInfo<'_>, _irql: u8) {}
 
     #[test]
     fn printed_path_keeps_a_path_of_the_maximum_length_whole() {
@@ -130,5 +197,20 @@ mod tests {
 
         assert_eq!(COMPONENT_ID.load(Ordering::Relaxed), DPFLTR_IHVNETWORK_ID);
         assert_eq!(LEVEL.load(Ordering::Relaxed), DPFLTR_INFO_LEVEL);
+    }
+
+    // One test, because the callback is global and tests run in parallel.
+    #[test]
+    fn the_callback_starts_unset_and_follows_the_setter() {
+        assert!(current_callback().is_none());
+
+        set_callback(Some(callback));
+        assert_eq!(
+            current_callback().map(|current| current as *const ()),
+            Some(callback as *const ())
+        );
+
+        set_callback(None);
+        assert!(current_callback().is_none());
     }
 }
