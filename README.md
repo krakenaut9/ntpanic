@@ -1,43 +1,182 @@
 # ntpanic
 
-`ntpanic` provides a global `#[panic_handler]` for **Rust Windows kernel-mode drivers**.
+A panic handler for Windows kernel-mode Rust drivers.
 
-When a panic occurs, the handler:
-
-1. prints the panic location with `DbgPrintEx` (if available),
-2. checks whether a kernel debugger is attached,
-3. breaks into the debugger with `DbgBreakPointWithStatus` when one is present,
-4. terminates the system with `KeBugCheckEx`.
-
-This crate is intended for `#![no_std]` Windows kernel driver development where a deterministic panic path is required.
+A panic in a driver cannot be recovered from. `ntpanic` makes it fail usefully: it
+prints where the panic happened with `DbgPrintEx`, breaks into the kernel debugger if
+one is attached, and then bug-checks the system with its own bug check code, whose
+parameters give the file and line of the panic.
 
 ---
 
-## Features
+## Highlights
 
-- `#![no_std]` compatible
-- Windows kernel-mode panic handling
-- Logs panic source location (`file:line`) through `DbgPrintEx`
-- Breaks into KD/WinDbg when a debugger is present
-- Falls back to a bug check for guaranteed termination
-- Minimal integration: add the crate as a dependency and link it into your driver
-
----
-
-## Scope
-
-This crate is **Windows kernel-mode only**.
-
-It is designed for Rust drivers built against Windows kernel APIs exposed through `windows-sys`.
-
-It does **not** attempt to recover from panic. A panic is treated as a fatal, unrecoverable condition.
+- `#![no_std]`, no allocation, nothing to initialize
+- x64, x86 and ARM64
+- Prints the panic's location, IRQL, process ID and thread ID
+- Skips the message above DIRQL, where `DbgPrintEx` can deadlock
+- Breaks into KD or WinDbg when a debugger is attached
+- Ends in bug check `0xE0525354`, which carries the file and line
+- Optional callback, for example to log the panic message with your own logger
+- Builds on stable Rust 1.71 or later, without the WDK
 
 ---
 
-## Installation
+## Usage
 
-Add the crate to your driver crate:
+Add the crate to your driver:
 
 ```toml
 [dependencies]
 ntpanic = "0.1"
+```
+
+Rust links a dependency only when the crate refers to it, so name it once in the
+driver's root module:
+
+```rust,ignore
+#[cfg(not(test))]
+extern crate ntpanic;
+```
+
+`cfg(not(test))` keeps it out of `cargo test` builds, which get their panic handler
+from `std`: a binary can have only one. For the same reason, `ntpanic` cannot be used
+together with another panic handler crate, such as `wdk-panic`.
+
+As a `#![no_std]` driver, it must be built with `panic = "abort"`:
+
+```toml
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"
+```
+
+---
+
+## What happens on a panic
+
+1. **Message.** At or below DIRQL, the handler prints one line with `DbgPrintEx`, which
+   a kernel debugger, or DebugView with *Capture Kernel* on, displays:
+
+   ```text
+   *************** RUST KERNEL PANIC at src\driver.rs:42 (irql 2, pid 4, tid 132) ***************
+   ```
+
+   A path longer than 256 bytes is shortened to its last 256, so that the line stays
+   within `DbgPrintEx`'s 512-byte limit. Above DIRQL, where `DbgPrintEx` can deadlock,
+   there is no message, but the steps below still run.
+2. **Callback.** The first panic calls the callback, if one is set; see
+   [Panic callback](#panic-callback).
+3. **Debugger.** If a kernel debugger is attached, the handler breaks into it with
+   `DbgBreakPointWithStatus`, stopping on the panicking thread.
+4. **Bug check.** The handler calls `KeBugCheckEx` with the code `0xE0525354` (its last
+   three bytes spell `RST`) and these parameters:
+
+   | Parameter | Value                                                      |
+   | --------- | ---------------------------------------------------------- |
+   | 1         | the line number                                            |
+   | 2         | the address of the file path, which is not null-terminated |
+   | 3         | the length of the file path, in bytes                      |
+   | 4         | 0, reserved                                                |
+
+   A panic without a location reports the path `<unknown>` and the line 0.
+
+In a kernel or complete memory dump, `.bugcheck` shows the parameters and `da` reads
+the path:
+
+```text
+kd> .bugcheck
+Bugcheck code E0525354
+Arguments 00000000`0000002a fffff806`2b4c1230 00000000`0000000d 00000000`00000000
+kd> da fffff806`2b4c1230 L0xd
+fffff806`2b4c1230  "src\driver.rs"
+```
+
+---
+
+## Settings
+
+The settings can be changed at any IRQL. A panic uses the values set before it, so set
+them early, for example at the start of `DriverEntry`.
+
+### Debug output filter
+
+The message is printed under the component `DPFLTR_IHVDRIVER_ID` (77), at the level
+`DPFLTR_ERROR_LEVEL` (0), which Windows shows by default whatever the component.
+`set_component_id` and `set_level` change them; Microsoft asks drivers to use one of
+the six component IDs reserved for independent hardware vendors, 77 to 82:
+
+```rust,ignore
+// From the WDK's dpfilter.h.
+const DPFLTR_IHVNETWORK_ID: u32 = 80;
+
+ntpanic::set_component_id(DPFLTR_IHVNETWORK_ID);
+```
+
+A level other than `DPFLTR_ERROR_LEVEL` is shown only if the component's filter mask
+enables it, so changing the level can hide the message. See
+[Reading and Filtering Debugging Messages](https://learn.microsoft.com/en-us/windows-hardware/drivers/debugger/reading-and-filtering-debugging-messages).
+
+### Panic callback
+
+`ntpanic` prints the panic's location but not its message, such as
+`called Option::unwrap() on a None value`: formatting the message would put the
+formatting code, and the `Display` code of whatever the message contains, in the panic
+path of every driver. A driver can log the message itself, from a callback:
+
+```rust,ignore
+use core::panic::PanicInfo;
+
+// From the WDK's wdm.h.
+const DISPATCH_LEVEL: u8 = 2;
+
+fn log_panic(info: &PanicInfo, irql: u8) {
+    // A logger may allocate or touch pageable memory, which is safe only below
+    // DISPATCH_LEVEL.
+    if irql < DISPATCH_LEVEL {
+        log::error!("{info}");
+    }
+}
+
+ntpanic::set_callback(Some(log_panic));
+```
+
+The callback gets the panic and the IRQL it occurred at. It runs after the message and
+before the debugger break, and only once: a later panic in the same crash, including
+one inside the callback, is still printed but does not call it.
+
+It runs where the panic occurred, on that thread's stack and at any IRQL up to
+`HIGH_LEVEL`, with the system in an unknown state. It must not wait or take locks, must
+not allocate or touch pageable memory at `DISPATCH_LEVEL` or above, and must not call
+`DbgPrintEx` above DIRQL. If it never returns, the system hangs instead of
+bug-checking.
+
+To reset a device or add data to the crash dump, register a bug check callback with
+`KeRegisterBugCheckCallback` or `KeRegisterBugCheckReasonCallback` instead: Windows
+calls those for every bug check, not only for panics.
+
+---
+
+## Requirements
+
+- A Windows kernel-mode driver for `x86_64-pc-windows-msvc`, `i686-pc-windows-msvc` or
+  `aarch64-pc-windows-msvc`
+- `panic = "abort"`
+- Rust 1.71 or later
+
+The handler imports `DbgPrintEx`, `DbgBreakPointWithStatus`,
+`KdRefreshDebuggerNotPresent`, `KeBugCheckEx`, `PsGetCurrentProcessId` and
+`PsGetCurrentThreadId` from `ntoskrnl.exe`, and `KeGetCurrentIrql` from `ntoskrnl.exe`
+on x64 and from `hal.dll` on x86 and ARM64, as `wdm.h` declares them. It declares them
+with `raw-dylib`, so building it needs no import library and no WDK.
+
+---
+
+## Minimum supported Rust version
+
+**1.71**, the minimum of the `windows-sys` and `windows-link` crates that `ntpanic` uses.
+
+The MSRV is treated as a compatibility promise: raising it is a breaking change and
+will come with a minor version bump before 1.0.
