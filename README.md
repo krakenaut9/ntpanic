@@ -15,7 +15,7 @@ parameters give the file and line of the panic.
 - x64, x86 and ARM64
 - Prints the panic's location, IRQL, process ID and thread ID
 - Skips the message above DIRQL, where `DbgPrintEx` can deadlock
-- Breaks into KD or WinDbg when a debugger is attached
+- Breaks into KD or `WinDbg` when a debugger is attached
 - Ends in bug check `0xE0525354`, which carries the file and line
 - Optional callback, for example to log the panic message with your own logger
 - Builds on stable Rust 1.71 or later, without the WDK
@@ -58,7 +58,7 @@ panic = "abort"
 ## What happens on a panic
 
 1. **Message.** At or below DIRQL, the handler prints one line with `DbgPrintEx`, which
-   a kernel debugger, or DebugView with *Capture Kernel* on, displays:
+   a kernel debugger, or `DebugView` with *Capture Kernel* on, displays:
 
    ```text
    *************** RUST KERNEL PANIC at src\driver.rs:42 (irql 2, pid 4, tid 132) ***************
