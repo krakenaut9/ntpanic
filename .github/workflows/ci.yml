@@ -1,0 +1,118 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Nothing here writes to the repository.
+permissions:
+  contents: read
+
+# A new push to a branch makes the run in progress obsolete.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # The crate is for Windows only, and its tests are Windows programs, so every cargo job
+  # runs on Windows: x64 and x86 (through WOW64) on the x64 runner, ARM64 on its own.
+  test:
+    name: test ${{ matrix.toolchain }} / ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        toolchain: [stable, nightly]
+        target: [x86_64-pc-windows-msvc, i686-pc-windows-msvc, aarch64-pc-windows-msvc]
+        include:
+          - { target: x86_64-pc-windows-msvc, runner: windows-latest }
+          - { target: i686-pc-windows-msvc, runner: windows-latest }
+          - { target: aarch64-pc-windows-msvc, runner: windows-11-arm }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.toolchain }}
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --locked --target ${{ matrix.target }}
+
+  msrv:
+    name: msrv 1.71 / ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: x86_64-pc-windows-msvc, runner: windows-latest }
+          - { target: i686-pc-windows-msvc, runner: windows-latest }
+          - { target: aarch64-pc-windows-msvc, runner: windows-11-arm }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.71.0"
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --locked --target ${{ matrix.target }}
+
+  lint:
+    name: clippy + rustfmt
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+          targets: i686-pc-windows-msvc, aarch64-pc-windows-msvc
+      - uses: Swatinem/rust-cache@v2
+      # The lint levels come from the attributes in src/lib.rs; -D warnings escalates
+      # them to errors here. Each target is checked, because their code differs.
+      - run: cargo clippy --locked --all-targets --target x86_64-pc-windows-msvc -- -D warnings -D clippy::cargo
+      - run: cargo clippy --locked --all-targets --target i686-pc-windows-msvc -- -D warnings -D clippy::cargo
+      - run: cargo clippy --locked --all-targets --target aarch64-pc-windows-msvc -- -D warnings -D clippy::cargo
+      - run: cargo fmt --check
+
+  docs:
+    name: rustdoc / ${{ matrix.target }}
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [x86_64-pc-windows-msvc, i686-pc-windows-msvc, aarch64-pc-windows-msvc]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+      # Reproduces the docs.rs build, which sets --cfg docsrs, for each target it builds.
+      - name: rustdoc (docs.rs configuration)
+        run: cargo doc --locked --no-deps --target ${{ matrix.target }}
+        env:
+          RUSTDOCFLAGS: --cfg docsrs -D warnings
+      # The private items too, so that their documentation cannot rot unseen.
+      - name: rustdoc (private items)
+        run: cargo doc --locked --no-deps --document-private-items --target ${{ matrix.target }}
+        env:
+          RUSTDOCFLAGS: -D warnings
+
+  package:
+    name: cargo publish --dry-run
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo publish --locked --dry-run
+
+  readme:
+    name: README API coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 .github/scripts/readme_api_coverage.py

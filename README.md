@@ -159,9 +159,10 @@ fn log_panic(info: &PanicInfo, irql: u8) {
 ntpanic::set_callback(Some(log_panic));
 ```
 
-The callback gets the panic and the IRQL it occurred at. It runs after the message and
-before the debugger break, and only once: a later panic in the same crash, including
-one inside the callback, is still printed but does not call it.
+The callback is a `Callback`, `fn(&PanicInfo, u8)`: it gets the panic and the IRQL it
+occurred at. It runs after the message and before the debugger break, and only once: a
+later panic in the same crash, including one inside the callback, is still printed but
+does not call it.
 
 It runs where the panic occurred, on that thread's stack and at any IRQL up to
 `HIGH_LEVEL`, with the system in an unknown state. It must not wait or take locks, must
