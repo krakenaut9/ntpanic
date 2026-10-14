@@ -1,5 +1,10 @@
 # ntpanic
 
+[![CI](https://github.com/krakenaut9/ntpanic/actions/workflows/ci.yml/badge.svg)](https://github.com/krakenaut9/ntpanic/actions/workflows/ci.yml)
+[![crates.io](https://img.shields.io/crates/v/ntpanic.svg)](https://crates.io/crates/ntpanic)
+[![docs.rs](https://docs.rs/ntpanic/badge.svg)](https://docs.rs/ntpanic)
+[![MSRV](https://img.shields.io/badge/rustc-1.71+-blue.svg)](https://blog.rust-lang.org/2023/07/13/Rust-1.71.0.html)
+
 A panic handler for Windows kernel-mode Rust drivers.
 
 A panic in a driver cannot be recovered from. `ntpanic` makes it fail usefully: it
